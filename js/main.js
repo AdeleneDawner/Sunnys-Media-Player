@@ -45,7 +45,19 @@ async function loadEpisodes() {
 // ---- wiring -----------------------------------------------------------
 const player = new AudioOutput();
 player.stallTimeoutMs = config.stallTimeoutMs;
-const cues = new Cues(config);
+// Shared audio context: plays the speaker keep-awake and the cues. Chrome won't
+// start audio until the page has been interacted with, so it's started on load if
+// allowed, otherwise on the first tap or pedal press.
+const keepAwake = new KeepAwake(config.keepAwake);
+const cues = new Cues(config, { getContext: () => (keepAwake.running ? keepAwake.ctx : null), storage });
+let pressAt = 0;
+const playCue = cues.play.bind(cues);
+cues.play = async (name) => {
+  const lag = Math.round(performance.now() - pressAt);
+  const via = cues.sourceOf(name);
+  logger.log({ event: 'cue', button: name, mode_after: controller.mode, detail: `${via}; started ${lag}ms after press` });
+  return playCue(name);
+};
 const logger = new Logger({ storage, getEndpoint });
 const controller = new Controller({
   config,
@@ -58,19 +70,23 @@ const controller = new Controller({
 });
 logger.onChange(() => render());
 
-// Bluetooth speaker keep-awake. Chrome won't start audio until the page has been
-// interacted with, so it's started on load if allowed, otherwise on the first press.
-const keepAwake = new KeepAwake(config.keepAwake);
-keepAwake.start();
+keepAwake.start().then(() => cues.load());
 
 // If the keep-awake wasn't running yet (first press after a reload), the speaker
 // may be asleep: start it, then give the speaker time to wake before the cue.
 let waking = null;
 async function handlePress(button, input) {
-  if (!keepAwake.running && config.keepAwake.level > 0 && !waking) {
+  pressAt = performance.now();
+  if (!keepAwake.running && !waking) {
+    const needDelay = config.keepAwake.level > 0;
     waking = keepAwake
       .start()
-      .then(() => sleep(config.keepAwake.wakeDelayMs))
+      .then(() => cues.load())
+      .then(() => {
+        if (!needDelay) return;
+        logger.log({ event: 'wake_delay', detail: `audio wasn't running; waited ${config.keepAwake.wakeDelayMs}ms for the speaker` });
+        return sleep(config.keepAwake.wakeDelayMs);
+      })
       .finally(() => (waking = null));
   }
   if (waking) await waking; // presses during the wake-up wait queue up in order
@@ -97,8 +113,10 @@ document.querySelectorAll('[data-button]').forEach((el) =>
     handlePress(el.dataset.button, 'screen');
   }),
 );
-// Any tap on the page also starts the keep-awake.
-window.addEventListener('pointerdown', () => keepAwake.start());
+// Any tap on the page also starts the audio.
+window.addEventListener('pointerdown', () => {
+  if (!keepAwake.running) keepAwake.start().then(() => cues.load());
+});
 
 // Focus watch: if the page loses focus, pedal presses go elsewhere.
 let hadFocus = null;
@@ -126,6 +144,7 @@ $('#open-settings').addEventListener('click', () => {
   $('#set-debounce').value = config.debounceMs;
   $('#set-keepawake').value = Math.round(config.keepAwake.level * 1000 * 10) / 10;
   $('#set-status').textContent = '';
+  renderCueRows();
   dlg.showModal();
 });
 $('#save-settings').addEventListener('click', () => {
@@ -160,6 +179,76 @@ $('#export-csv').addEventListener('click', () => {
   URL.revokeObjectURL(a.href);
 });
 $('#close-settings').addEventListener('click', () => dlg.close());
+
+// ---- cue recording ----------------------------------------------------
+const CUE_LABELS = { music: 'Music', podcast: 'Podcast', silence: 'All done' };
+let recorder = null;
+
+function renderCueRows() {
+  $('#cue-rows').innerHTML = Object.entries(CUE_LABELS)
+    .map(([name, label]) => `
+      <div class="cue-row" data-cue="${name}">
+        <span class="cue-name">${label}</span>
+        <span class="cue-src">${esc(cues.sourceOf(name))}</span>
+        <button data-act="rec">${recorder?.name === name ? 'Stop' : 'Record'}</button>
+        <button data-act="play">Play</button>
+        ${cues.recording(name) ? '<button data-act="clear">Delete</button>' : ''}
+      </div>`)
+    .join('');
+}
+
+$('#cue-rows').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const name = btn.closest('[data-cue]').dataset.cue;
+  await keepAwake.start();
+  if (btn.dataset.act === 'play') {
+    cues.stop();
+    pressAt = performance.now();
+    return playCue(name);
+  }
+  if (btn.dataset.act === 'clear') {
+    await cues.setRecording(name, null);
+    return renderCueRows();
+  }
+  if (btn.dataset.act === 'rec') {
+    if (recorder?.name === name) return recorder.stop();
+    if (recorder) recorder.stop();
+    try {
+      recorder = await startRecording(name);
+      $('#set-status').textContent = `Recording "${CUE_LABELS[name]}". Say it, then press Stop.`;
+    } catch (err) {
+      $('#set-status').textContent = `Couldn't use the microphone: ${err.message}`;
+    }
+    renderCueRows();
+  }
+});
+
+async function startRecording(name) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
+  });
+  const mr = new MediaRecorder(stream);
+  const chunks = [];
+  mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  const autoStop = setTimeout(() => mr.state === 'recording' && mr.stop(), 6000);
+  mr.onstop = async () => {
+    clearTimeout(autoStop);
+    stream.getTracks().forEach((t) => t.stop());
+    recorder = null;
+    const blob = new Blob(chunks, { type: mr.mimeType });
+    const dataUrl = await new Promise((r) => {
+      const fr = new FileReader();
+      fr.onload = () => r(fr.result);
+      fr.readAsDataURL(blob);
+    });
+    await cues.setRecording(name, dataUrl);
+    $('#set-status').textContent = `Saved "${CUE_LABELS[name]}". Press Play to check it.`;
+    renderCueRows();
+  };
+  mr.start();
+  return { name, stop: () => mr.state === 'recording' && mr.stop() };
+}
 
 // ---- rendering --------------------------------------------------------
 const MODE_WORDS = { silence: 'Quiet', music: 'Music', podcast: 'Podcast' };
@@ -211,6 +300,8 @@ function describe(r) {
     case 'source_dropped': return `Dropped: ${r.detail}`;
     case 'all_failed': return `Nothing would play (${r.detail})`;
     case 'episode_ended': return `Finished ${r.detail}`;
+    case 'cue': return `Cue "${r.button}": ${r.detail}`;
+    case 'wake_delay': return `Waited for speaker: ${r.detail}`;
     default: return `${r.event}${r.detail ? `: ${r.detail}` : ''}`;
   }
 }

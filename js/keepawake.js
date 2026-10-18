@@ -20,24 +20,29 @@ export class KeepAwake {
 
   // Safe to call repeatedly; call from user input (key press / click), since
   // Chrome only lets audio start after the page has been interacted with.
+  // The audio context is also used to play the cues, so it's created even when
+  // the keep-awake level is 0 (the noise is just silent then).
   async start() {
-    if (!this.level) return;
     try {
       if (!this.ctx) this._build();
       if (this.ctx.state !== 'running') await this.ctx.resume();
     } catch (err) {
-      console.warn('keep-awake failed to start', err);
+      console.warn('audio context failed to start', err);
     }
   }
 
   setLevel(level) {
     this.level = level;
     if (this.gain) this.gain.gain.value = level;
-    if (level && !this.ctx) this.start();
   }
 
   _build() {
-    const ctx = (this.ctx = new AudioContext());
+    const ctx = (this.ctx = new AudioContext({ latencyHint: 'interactive' }));
+    // If the system suspends audio (e.g. a Bluetooth reconnect), resume right away
+    // rather than waiting for the next press.
+    ctx.addEventListener('statechange', () => {
+      if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {});
+    });
     // 4 seconds of brown noise, looped.
     const len = ctx.sampleRate * 4;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
