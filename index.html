@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunny Radio</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1d2026;
+    --line: #2c3038;
+    --text: #e9e6df;
+    --muted: #8d919a;
+    --music: #e0a43a;
+    --podcast: #5fa8d3;
+    --silence: #9a8fc4;
+    --warn: #e36d5a;
+    --accent: var(--muted);
+  }
+  body[data-mode="music"]   { --accent: var(--music); }
+  body[data-mode="podcast"] { --accent: var(--podcast); }
+  body[data-mode="silence"] { --accent: var(--silence); }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 16px;
+    padding: 16px;
+    max-width: 1100px;
+    margin-inline: auto;
+  }
+
+  #focus-banner {
+    background: var(--warn);
+    color: #1a0f0c;
+    font-weight: 600;
+    padding: 14px 18px;
+    border-radius: 10px;
+    font-size: 1.1rem;
+  }
+
+  .now {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 8px solid var(--accent);
+    border-radius: 14px;
+    padding: 22px 26px;
+    transition: border-color .4s;
+  }
+  #mode { font-size: clamp(2.4rem, 7vw, 4.5rem); font-weight: 700; color: var(--accent); line-height: 1.05; transition: color .4s; }
+  #source { font-size: clamp(1.1rem, 2.6vw, 1.6rem); color: var(--text); margin-top: 6px; min-height: 1.4em; overflow-wrap: anywhere; }
+
+  .pedals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .pedal {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 14px;
+    padding: 18px 10px;
+    font: inherit;
+    font-size: 1.3rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .pedal .k { font-size: .85rem; color: var(--muted); font-weight: 500; letter-spacing: .08em; }
+  .pedal[data-button="music"].active   { border-color: var(--music);   box-shadow: inset 0 0 0 2px var(--music); }
+  .pedal[data-button="podcast"].active { border-color: var(--podcast); box-shadow: inset 0 0 0 2px var(--podcast); }
+  .pedal[data-button="silence"].active { border-color: var(--silence); box-shadow: inset 0 0 0 2px var(--silence); }
+  .pedal.flash { animation: flash .6s ease-out; }
+  @keyframes flash { from { background: #3a3f49; } to { background: var(--panel); } }
+
+  .activity { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; min-height: 0; overflow: auto; }
+  .activity h2 { margin: 0 0 8px; font-size: .8rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+  #activity { list-style: none; margin: 0; padding: 0; }
+  #activity li { display: flex; gap: 12px; padding: 5px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  #activity li:first-child { border-top: 0; }
+  #activity time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  #activity .ev-source_failed span, #activity .ev-all_failed span, #activity .ev-source_dropped span, #activity .ev-focus_lost span { color: var(--warn); }
+  #activity .ev-press_ignored span { color: var(--muted); }
+
+  footer { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; color: var(--muted); font-size: .9rem; }
+  footer .grow { flex: 1; }
+  #open-settings { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 22px; width: min(560px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h2 { margin: 0 0 14px; font-size: 1.2rem; }
+  dialog label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: .9rem; }
+  dialog input { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  dialog .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  dialog button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+  dialog button.primary { background: var(--podcast); color: #0c1a24; border-color: transparent; font-weight: 600; }
+  #set-status { margin-top: 12px; min-height: 1.4em; color: var(--muted); }
+  .hint { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+</style>
+</head>
+<body data-mode="silence">
+  <div id="focus-banner" hidden>Pedals aren't reaching this page. Tap anywhere on the screen to fix.</div>
+
+  <section class="now" aria-live="polite">
+    <div id="mode">Quiet</div>
+    <div id="source"></div>
+  </section>
+
+  <div style="display:grid; grid-template-rows:auto 1fr; gap:16px; min-height:0">
+    <div class="pedals">
+      <button class="pedal" data-button="music"><span class="k">PEDAL <span class="key-a">A</span></span>Music</button>
+      <button class="pedal" data-button="silence"><span class="k">PEDAL <span class="key-b">B</span></span>Quiet</button>
+      <button class="pedal" data-button="podcast"><span class="k">PEDAL <span class="key-c">C</span></span>Podcasts</button>
+    </div>
+    <section class="activity">
+      <h2>Recent</h2>
+      <ul id="activity"></ul>
+    </section>
+  </div>
+
+  <footer>
+    <span id="log-status"></span>
+    <span id="ep-status"></span>
+    <span class="grow"></span>
+    <button id="open-settings">Settings</button>
+  </footer>
+
+  <dialog id="settings">
+    <h2>Settings (this device only)</h2>
+    <label for="set-endpoint">Google Sheet web app URL</label>
+    <input id="set-endpoint" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+    <div class="hint">From Deploy in the Sheet's Apps Script. Used for the podcast list and the log. Stored on this Chromebook, not in the public repo.</div>
+    <label for="set-debounce">Ignore presses for (milliseconds) after an accepted press</label>
+    <input id="set-debounce" type="number" min="0" step="100">
+    <div class="row">
+      <button class="primary" id="save-settings">Save</button>
+      <button id="test-log">Send test row</button>
+      <button id="export-csv">Export log (CSV)</button>
+      <span style="flex:1"></span>
+      <button id="close-settings">Close</button>
+    </div>
+    <div id="set-status"></div>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
