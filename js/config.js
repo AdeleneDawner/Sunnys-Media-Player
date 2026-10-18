@@ -1,6 +1,22 @@
 // Sunny Radio settings. Everything you're likely to tune lives here.
 // Changes go live when you push to GitHub (Pages redeploys automatically).
 
+// SomaFM publishes each channel on several servers and in several formats.
+function somafm(name, id, volume = 1.0) {
+  return {
+    name,
+    volume,
+    urls: [
+      `https://ice1.somafm.com/${id}-128-mp3`,
+      `https://ice2.somafm.com/${id}-128-mp3`,
+      `https://ice4.somafm.com/${id}-128-mp3`,
+      `https://ice6.somafm.com/${id}-128-mp3`,
+      `https://ice1.somafm.com/${id}-128-aac`,
+      `https://ice.somafm.com/${id}`,
+    ],
+  };
+}
+
 export default {
   // Which pedal key does what. The pedal sends a / b / c out of the box.
   keys: {
@@ -37,16 +53,29 @@ export default {
   // The silence cue ("all done") always plays.
   cueWhen: 'starting',
 
+  // Keeps a Bluetooth speaker from going to sleep during quiet stretches (which
+  // clips the start of the next sound) by playing a constant, very quiet low rumble.
+  //   level: 0 = off. Default 0.01 (about -56 dB below full scale). Raise it if the speaker still sleeps; lower it
+  //          if you can hear it with your ear next to the speaker in a quiet room.
+  //          Also adjustable on the device in Settings (shown there x1000, so 10 = 0.01).
+  //   wakeDelayMs: if the keep-awake wasn't running yet (first press after a
+  //          reload), wait this long for the speaker to wake before the cue.
+  keepAwake: { level: 0.01, cutoffHz: 150, wakeDelayMs: 2000 },
+
   masterVolume: 1.0, // 0..1, multiplies every source's volume
   cueVolume: 1.0,    // 0..1, for recorded cue files
 
   // Music: internet radio streams. `volume` (0..1) evens out loud vs quiet stations.
-  // More SomaFM channels: https://somafm.com/listen/sonoscustom.html (use the "Direct URL").
+  // Each station can list several addresses in `urls`; they're tried in order until
+  // one plays, and the one that worked is tried first next time.
+  // SomaFM channels: https://somafm.com/ (stream name = the channel's id, e.g. "groovesalad").
   stations: [
-    { name: 'Groove Salad',   url: 'https://ice.somafm.com/groovesalad',  volume: 1.0 },
-    { name: 'Drone Zone',     url: 'https://ice.somafm.com/dronezone',    volume: 1.0 },
-    { name: 'Deep Space One', url: 'https://ice.somafm.com/deepspaceone', volume: 1.0 },
-    { name: 'Folk Forward',   url: 'https://ice.somafm.com/folkfwd',      volume: 1.0 },
+    somafm('Groove Salad', 'groovesalad'),
+    somafm('Drone Zone', 'dronezone'),
+    somafm('Deep Space One', 'deepspaceone'),
+    somafm('Folk Forward', 'folkfwd'),
+    // A non-SomaFM station looks like:
+    // { name: 'Some Station', urls: ['https://example.com/stream.mp3'], volume: 1.0 },
   ],
 
   // Podcasts. The show list lives in the Google Sheet's "podcasts" tab; the

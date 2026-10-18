@@ -33,7 +33,7 @@ export class Controller {
     this.drops = []; // { key, at } for mid-play drops, to avoid retry loops
 
     const saved = storage.get('state') || {};
-    this.music = { idx: saved.music?.idx ?? 0 };
+    this.music = { idx: saved.music?.idx ?? 0, goodUrl: saved.music?.goodUrl ?? {} };
     this.podcast = {
       showKey: saved.podcast?.showKey ?? null,
       episode: saved.podcast?.episode ?? null, // { url, title, showKey, showName }
@@ -119,18 +119,30 @@ export class Controller {
     for (let k = 0; k < n; k++) {
       const i = (start + k) % n;
       const st = stations[i];
-      try {
-        await this.player.start(st.url, { volume: this._vol(st.volume), timeoutMs: this.config.startTimeoutMs });
-      } catch (err) {
-        if (op !== this.op || err?.superseded) return;
-        this._log('source_failed', { detail: `${st.name}: ${errText(err)}` });
+      // A station can list backup addresses; the one that worked last is tried first.
+      const urls = [...new Set([this.music.goodUrl?.[st.name], ...(st.urls || []), st.url].filter(Boolean))];
+      const errors = [];
+      let playing = null;
+      for (const url of urls) {
+        try {
+          await this.player.start(url, { volume: this._vol(st.volume), timeoutMs: this.config.startTimeoutMs });
+          playing = url;
+          break;
+        } catch (err) {
+          if (op !== this.op || err?.superseded) return;
+          errors.push(`${url} (${errText(err)})`);
+        }
+      }
+      if (!playing) {
+        this._log('source_failed', { detail: `${st.name}: ${errors.join('; ')}` });
         continue;
       }
       if (op !== this.op) return;
       this.music.idx = i;
+      (this.music.goodUrl ||= {})[st.name] = playing;
       this._persist();
-      this._setMode('music', { kind: 'music', label: st.name, key: `music:${st.url}` });
-      this._log('source_started', { detail: st.url });
+      this._setMode('music', { kind: 'music', label: st.name, key: `music:${st.name}` });
+      this._log('source_started', { detail: playing });
       return;
     }
     return this._allFailed(op, 'music: no station would play');

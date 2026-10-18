@@ -4,6 +4,7 @@ import { Cues } from './cues.js';
 import { Logger } from './logger.js';
 import { Controller } from './controller.js';
 import { createStorage } from './storage.js';
+import { KeepAwake } from './keepawake.js';
 
 const storage = createStorage();
 const $ = (sel) => document.querySelector(sel);
@@ -11,6 +12,7 @@ const $ = (sel) => document.querySelector(sel);
 // ---- device-local settings (override config.js without a redeploy) ----
 const local = storage.get('settings') || {};
 if (Number.isFinite(local.debounceMs)) config.debounceMs = local.debounceMs;
+if (Number.isFinite(local.keepAwakeLevel)) config.keepAwake.level = local.keepAwakeLevel;
 const getEndpoint = () => local.sheetUrl || config.sheetUrl || '';
 
 // ---- podcast episodes -------------------------------------------------
@@ -56,6 +58,26 @@ const controller = new Controller({
 });
 logger.onChange(() => render());
 
+// Bluetooth speaker keep-awake. Chrome won't start audio until the page has been
+// interacted with, so it's started on load if allowed, otherwise on the first press.
+const keepAwake = new KeepAwake(config.keepAwake);
+keepAwake.start();
+
+// If the keep-awake wasn't running yet (first press after a reload), the speaker
+// may be asleep: start it, then give the speaker time to wake before the cue.
+let waking = null;
+async function handlePress(button, input) {
+  if (!keepAwake.running && config.keepAwake.level > 0 && !waking) {
+    waking = keepAwake
+      .start()
+      .then(() => sleep(config.keepAwake.wakeDelayMs))
+      .finally(() => (waking = null));
+  }
+  if (waking) await waking; // presses during the wake-up wait queue up in order
+  controller.press(button, input);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Pedal = keyboard. Holding a pedal down auto-repeats; ignore repeats.
 window.addEventListener('keydown', (e) => {
   if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -65,16 +87,18 @@ window.addEventListener('keydown', (e) => {
   if (!button) return;
   e.preventDefault();
   flash(button);
-  controller.press(button, `pedal:${key}`);
+  handlePress(button, `pedal:${key}`);
 });
 
 // On-screen buttons (for humans; logged separately as input "screen").
 document.querySelectorAll('[data-button]').forEach((el) =>
   el.addEventListener('click', () => {
     flash(el.dataset.button);
-    controller.press(el.dataset.button, 'screen');
+    handlePress(el.dataset.button, 'screen');
   }),
 );
+// Any tap on the page also starts the keep-awake.
+window.addEventListener('pointerdown', () => keepAwake.start());
 
 // Focus watch: if the page loses focus, pedal presses go elsewhere.
 let hadFocus = null;
@@ -100,6 +124,7 @@ const dlg = $('#settings');
 $('#open-settings').addEventListener('click', () => {
   $('#set-endpoint').value = getEndpoint();
   $('#set-debounce').value = config.debounceMs;
+  $('#set-keepawake').value = Math.round(config.keepAwake.level * 1000 * 10) / 10;
   $('#set-status').textContent = '';
   dlg.showModal();
 });
@@ -107,6 +132,11 @@ $('#save-settings').addEventListener('click', () => {
   local.sheetUrl = $('#set-endpoint').value.trim();
   const d = parseInt($('#set-debounce').value, 10);
   if (Number.isFinite(d) && d >= 0) local.debounceMs = config.debounceMs = d;
+  const k = parseFloat($('#set-keepawake').value);
+  if (Number.isFinite(k) && k >= 0) {
+    local.keepAwakeLevel = config.keepAwake.level = k / 1000;
+    keepAwake.setLevel(config.keepAwake.level);
+  }
   storage.set('settings', local);
   $('#set-status').textContent = 'Saved.';
   logger.flush();
