@@ -47,7 +47,7 @@ export class AudioOutput {
 
   // Resolves once audio is actually playing; rejects on error/timeout, or
   // with { superseded: true } if stop()/start() is called first.
-  start(url, { volume = 1, startAt = 0, timeoutMs = 15000 } = {}) {
+  start(url, { volume = 1, startAt = 0, timeoutMs = 15000, cors = false } = {}) {
     this._supersede();
     const gen = ++this.gen;
     const el = this.el;
@@ -56,6 +56,11 @@ export class AudioOutput {
 
     el.pause();
     el.volume = Math.max(0, Math.min(1, volume));
+    // cors: request with CORS ("crossorigin=anonymous"). Servers that allow it get
+    // past the browser's opaque-response blocking (ORB), which can reject live
+    // streams fetched the plain way. Servers that don't allow it fail instead.
+    if (cors) el.crossOrigin = 'anonymous';
+    else el.removeAttribute('crossorigin');
     el.src = url;
 
     return new Promise((resolve, reject) => {

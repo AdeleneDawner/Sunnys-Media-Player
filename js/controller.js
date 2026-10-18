@@ -33,7 +33,7 @@ export class Controller {
     this.drops = []; // { key, at } for mid-play drops, to avoid retry loops
 
     const saved = storage.get('state') || {};
-    this.music = { idx: saved.music?.idx ?? 0, goodUrl: saved.music?.goodUrl ?? {} };
+    this.music = { idx: saved.music?.idx ?? 0, goodUrl: saved.music?.goodUrl ?? {}, goodCors: saved.music?.goodCors ?? {} };
     this.podcast = {
       showKey: saved.podcast?.showKey ?? null,
       episode: saved.podcast?.episode ?? null, // { url, title, showKey, showName }
@@ -123,14 +123,19 @@ export class Controller {
       const urls = [...new Set([this.music.goodUrl?.[st.name], ...(st.urls || []), st.url].filter(Boolean))];
       const errors = [];
       let playing = null;
-      for (const url of urls) {
+      // Each address is tried with a CORS request first, then a plain one.
+      const remembered = this.music.goodCors?.[st.name];
+      const attempts = urls.flatMap((url) => [true, false].map((cors) => ({ url, cors })));
+      if (remembered) attempts.sort((a, b) => (b.url === urls[0] && b.cors === remembered.cors) - (a.url === urls[0] && a.cors === remembered.cors));
+      for (const { url, cors } of attempts) {
         try {
-          await this.player.start(url, { volume: this._vol(st.volume), timeoutMs: this.config.startTimeoutMs });
+          await this.player.start(url, { volume: this._vol(st.volume), timeoutMs: this.config.startTimeoutMs, cors });
           playing = url;
+          (this.music.goodCors ||= {})[st.name] = { cors };
           break;
         } catch (err) {
           if (op !== this.op || err?.superseded) return;
-          errors.push(`${url} (${errText(err)})`);
+          errors.push(`${url}${cors ? ' [cors]' : ''} (${errText(err)})`);
         }
       }
       if (!playing) {

@@ -1,22 +1,6 @@
 // Sunny Radio settings. Everything you're likely to tune lives here.
 // Changes go live when you push to GitHub (Pages redeploys automatically).
 
-// SomaFM publishes each channel on several servers and in several formats.
-function somafm(name, id, volume = 1.0) {
-  return {
-    name,
-    volume,
-    urls: [
-      `https://ice1.somafm.com/${id}-128-mp3`,
-      `https://ice2.somafm.com/${id}-128-mp3`,
-      `https://ice4.somafm.com/${id}-128-mp3`,
-      `https://ice6.somafm.com/${id}-128-mp3`,
-      `https://ice1.somafm.com/${id}-128-aac`,
-      `https://ice.somafm.com/${id}`,
-    ],
-  };
-}
-
 export default {
   // Which pedal key does what. The pedal sends a / b / c out of the box.
   keys: {
@@ -68,13 +52,17 @@ export default {
   // Music: internet radio streams. `volume` (0..1) evens out loud vs quiet stations.
   // Each station can list several addresses in `urls`; they're tried in order until
   // one plays, and the one that worked is tried first next time.
-  // SomaFM channels: https://somafm.com/ (stream name = the channel's id, e.g. "groovesalad").
+  //
+  // Not every station allows being played from inside another website (SomaFM, for
+  // one, refuses with "403 Forbidden"). To check a stream before adding it, see the
+  // console test in the README.
   stations: [
-    somafm('Groove Salad', 'groovesalad'),
-    somafm('Drone Zone', 'dronezone'),
-    somafm('Deep Space One', 'deepspaceone'),
-    somafm('Folk Forward', 'folkfwd'),
-    // A non-SomaFM station looks like:
+    // Radio Paradise (listener-supported, no ads; allows playback from other sites).
+    { name: 'Radio Paradise Mellow',   urls: ['https://stream.radioparadise.com/mellow-128',   'https://stream.radioparadise.com/mellow-192'],   volume: 1.0 },
+    { name: 'Radio Paradise Main',     urls: ['https://stream.radioparadise.com/mp3-128',      'https://stream.radioparadise.com/mp3-192'],      volume: 1.0 },
+    { name: 'Radio Paradise Rock',     urls: ['https://stream.radioparadise.com/rock-128',     'https://stream.radioparadise.com/rock-192'],     volume: 1.0 },
+    { name: 'Radio Paradise Eclectic', urls: ['https://stream.radioparadise.com/eclectic-128', 'https://stream.radioparadise.com/eclectic-192'], volume: 1.0 },
+    // Another station looks like:
     // { name: 'Some Station', urls: ['https://example.com/stream.mp3'], volume: 1.0 },
   ],
 
