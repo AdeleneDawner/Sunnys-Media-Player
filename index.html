@@ -136,6 +136,9 @@
     <div class="hint">From Deploy in the Sheet's Apps Script. Used for the podcast list and the log. Stored on this Chromebook, not in the public repo.</div>
     <label for="set-debounce">Ignore presses for (milliseconds) after an accepted press</label>
     <input id="set-debounce" type="number" min="0" step="100">
+    <label for="set-keepawake">Speaker keep-awake level (0 = off, default 10)</label>
+    <input id="set-keepawake" type="number" min="0" step="0.5">
+    <div class="hint">A constant, very quiet low rumble so the Bluetooth speaker doesn't fall asleep between sounds. Raise it if cues still get clipped; lower it if you can hear it with your ear against the speaker.</div>
     <div class="row">
       <button class="primary" id="save-settings">Save</button>
       <button id="test-log">Send test row</button>
