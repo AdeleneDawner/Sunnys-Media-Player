@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Don't tell stream servers which site is playing them; some reject requests from other sites. -->
+<meta name="referrer" content="no-referrer">
 <title>Sunny Radio</title>
 <style>
   :root {
@@ -100,6 +102,12 @@
   dialog button.primary { background: var(--podcast); color: #0c1a24; border-color: transparent; font-weight: 600; }
   #set-status { margin-top: 12px; min-height: 1.4em; color: var(--muted); }
   .hint { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+  dialog { max-height: calc(100vh - 32px); overflow: auto; }
+  .cue-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .cue-row:first-child { border-top: 0; }
+  .cue-name { font-weight: 600; min-width: 5.5em; }
+  .cue-src { color: var(--muted); font-size: .85rem; flex: 1; min-width: 8em; }
+  .cue-row button { padding: 6px 12px; }
 </style>
 </head>
 <body data-mode="silence">
@@ -131,6 +139,9 @@
 
   <dialog id="settings">
     <h2>Settings (this device only)</h2>
+    <label>Spoken cues</label>
+    <div id="cue-rows"></div>
+    <div class="hint">Record each cue in your own voice (Chrome will ask for the microphone the first time). Recordings start instantly; text-to-speech can lag. Silence before and after the word is trimmed automatically.</div>
     <label for="set-endpoint">Google Sheet web app URL</label>
     <input id="set-endpoint" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
     <div class="hint">From Deploy in the Sheet's Apps Script. Used for the podcast list and the log. Stored on this Chromebook, not in the public repo.</div>
