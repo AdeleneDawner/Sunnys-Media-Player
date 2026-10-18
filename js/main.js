@@ -13,6 +13,7 @@ const $ = (sel) => document.querySelector(sel);
 const local = storage.get('settings') || {};
 if (Number.isFinite(local.debounceMs)) config.debounceMs = local.debounceMs;
 if (Number.isFinite(local.keepAwakeLevel)) config.keepAwake.level = local.keepAwakeLevel;
+if (Number.isFinite(local.cueVolume)) config.cueVolume = local.cueVolume;
 const getEndpoint = () => local.sheetUrl || config.sheetUrl || '';
 
 // ---- podcast episodes -------------------------------------------------
@@ -143,6 +144,7 @@ $('#open-settings').addEventListener('click', () => {
   $('#set-endpoint').value = getEndpoint();
   $('#set-debounce').value = config.debounceMs;
   $('#set-keepawake').value = Math.round(config.keepAwake.level * 1000 * 10) / 10;
+  $('#set-cuevol').value = config.cueVolume;
   $('#set-status').textContent = '';
   renderCueRows();
   dlg.showModal();
@@ -151,6 +153,8 @@ $('#save-settings').addEventListener('click', () => {
   local.sheetUrl = $('#set-endpoint').value.trim();
   const d = parseInt($('#set-debounce').value, 10);
   if (Number.isFinite(d) && d >= 0) local.debounceMs = config.debounceMs = d;
+  const cv = parseFloat($('#set-cuevol').value);
+  if (Number.isFinite(cv) && cv > 0) local.cueVolume = config.cueVolume = cv;
   const k = parseFloat($('#set-keepawake').value);
   if (Number.isFinite(k) && k >= 0) {
     local.keepAwakeLevel = config.keepAwake.level = k / 1000;

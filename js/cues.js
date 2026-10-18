@@ -34,7 +34,7 @@ export class Cues {
         try {
           const res = await fetch(src);
           const decoded = await ctx.decodeAudioData(await res.arrayBuffer());
-          this.buffers[name] = trimSilence(ctx, decoded);
+          this.buffers[name] = trimSilence(ctx, normalize(decoded));
         } catch (err) {
           console.warn(`cue ${name} failed to load`, err);
           delete this.buffers[name];
@@ -93,9 +93,16 @@ export class Cues {
     return new Promise((resolve) => {
       const src = ctx.createBufferSource();
       src.buffer = buf;
+      // Boost, then a limiter so the boost makes speech louder without clipping.
       const gain = ctx.createGain();
       gain.gain.value = this.config.cueVolume ?? 1;
-      src.connect(gain).connect(ctx.destination);
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -10;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.15;
+      src.connect(gain).connect(limiter).connect(ctx.destination);
       let done = false;
       const finish = () => {
         if (done) return;
@@ -141,9 +148,27 @@ export class Cues {
   }
 }
 
+// Scale so the loudest point is just under full scale (mic recordings usually
+// come in far quieter than music). Gain is capped so a near-silent recording
+// doesn't turn into amplified hiss.
+export function normalize(buf, target = 0.95, maxGain = 40) {
+  let peak = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+  }
+  if (!peak) return buf;
+  const g = Math.min(maxGain, target / peak);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < d.length; i++) d[i] *= g;
+  }
+  return buf;
+}
+
 // Cut leading/trailing near-silence (keeping a few ms of margin) so a cue
 // recorded with a pause before the word still plays immediately.
-export function trimSilence(ctx, buf, threshold = 0.02, marginSec = 0.03) {
+export function trimSilence(ctx, buf, threshold = 0.06, marginSec = 0.04) {
   const ch = buf.getChannelData(0);
   let start = 0;
   let end = ch.length - 1;

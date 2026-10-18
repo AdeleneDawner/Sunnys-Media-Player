@@ -47,7 +47,10 @@ export default {
   keepAwake: { level: 0.01, cutoffHz: 150, wakeDelayMs: 2000 },
 
   masterVolume: 1.0, // 0..1, multiplies every source's volume
-  cueVolume: 1.0,    // 0..1, for recorded cue files
+  // Loudness of recorded cues. Recordings are normalized to full level, then
+  // boosted by this factor through a limiter (so higher = louder, not distorted).
+  // 1 = plain normalized; default 3. Also adjustable on the device in Settings.
+  cueVolume: 3.0,
 
   // Music: internet radio streams. `volume` (0..1) evens out loud vs quiet stations.
   // Each station can list several addresses in `urls`; they're tried in order until
