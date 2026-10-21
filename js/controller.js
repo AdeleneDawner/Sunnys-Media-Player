@@ -7,7 +7,27 @@
 //             while a podcast plays  -> a different show, fresh episode
 //   silence : stop, say "all done"
 //
+// Quiet hours (config.quietHours, e.g. 22:00-07:00, hard stop 23:00):
+//   - when they begin, music stops with "all done"; a podcast is left to finish
+//   - music is refused with "not doing that", whatever is playing
+//   - a podcast can't be started from silence ("not doing that"), but while one
+//     is finishing, pressing podcast still switches shows
+//   - at the hard stop, anything still playing stops with "all done"
+//   - podcasts don't auto-continue to another episode
+// A podcast finishing on its own says "all done".
+//
 // Sources that won't start are skipped automatically.
+
+// Is `date` inside the daily window "HH:MM"-"HH:MM" (which may wrap past midnight)?
+export function inQuietHours(date, quiet) {
+  if (!quiet?.enabled) return false;
+  const mins = (hm) => { const [h, m] = String(hm).split(':').map(Number); return h * 60 + (m || 0); };
+  const t = date.getHours() * 60 + date.getMinutes();
+  const a = mins(quiet.start);
+  const b = mins(quiet.end);
+  if (a === b) return false;
+  return a < b ? t >= a && t < b : t >= a || t < b;
+}
 
 const RECENT_DROP_WINDOW_MS = 5 * 60 * 1000;
 
@@ -41,6 +61,7 @@ export class Controller {
       finished: saved.podcast?.finished ?? false,
     };
     this.played = saved.played ?? {}; // showKey -> recently played episode URLs
+    this._wasQuiet = this.isQuiet();
 
     player.onEnded(() => this._handleEnded());
     player.onFailure((err) => this._handleDrop(err));
@@ -48,6 +69,10 @@ export class Controller {
 
   get debounceMs() {
     return this.config.debounceMs;
+  }
+
+  isQuiet() {
+    return inQuietHours(new Date(this.now()), this.config.quietHours);
   }
 
   // ---- public ----------------------------------------------------------
@@ -71,6 +96,11 @@ export class Controller {
       this._log('press', { input, button, ...before, mode_after: button, source_after: '', detail: 'stop' });
       return this._silence(op);
     }
+    if (this.isQuiet() && (button === 'music' || (button === 'podcast' && this.mode !== 'podcast'))) {
+      this._log('press', { input, button, ...before, mode_after: this.mode, source_after: this._label(), detail: 'refused: quiet hours' });
+      await this.cues.play('refuse');
+      return;
+    }
     if (button === 'music') {
       const isNext = this.mode === 'music';
       this._log('press', { input, button, ...before, mode_after: button, source_after: '', detail: isNext ? 'next station' : 'resume music' });
@@ -83,9 +113,30 @@ export class Controller {
     }
   }
 
-  // Call every few seconds so podcast position survives a reboot.
+  // Call every few seconds: saves podcast position (so it survives a reboot)
+  // and handles the start of quiet hours.
   tick() {
     this._savePodcastPosition();
+    const quiet = this.isQuiet();
+    const pastHardStop = quiet && inQuietHours(new Date(this.now()), {
+      enabled: !!this.config.quietHours?.hardStop,
+      start: this.config.quietHours?.hardStop,
+      end: this.config.quietHours?.end,
+    });
+    if (pastHardStop && this.mode !== 'silence') {
+      const op = ++this.op;
+      this.cues.stop();
+      this._log('quiet_hours_stop', { detail: `hard stop: stopped ${this._label()}` });
+      this._silence(op);
+    } else if (quiet && !this._wasQuiet && this.mode === 'music') {
+      const op = ++this.op;
+      this.cues.stop();
+      this._log('quiet_hours_stop', { detail: `stopped ${this._label()}` });
+      this._silence(op);
+    } else if (quiet && !this._wasQuiet) {
+      this._log('quiet_hours_start', { detail: this.mode === 'podcast' ? 'podcast left to finish' : '' });
+    }
+    this._wasQuiet = quiet;
   }
 
   // ---- actions ---------------------------------------------------------
@@ -242,7 +293,7 @@ export class Controller {
       this._persist();
       const op = ++this.op;
       const how = this.config.podcasts.onEpisodeEnd;
-      if (how === 'next-episode' || how === 'next-show') {
+      if ((how === 'next-episode' || how === 'next-show') && !this.isQuiet()) {
         const shows = this.getShows().filter((s) => s.episodes?.length);
         const curIdx = Math.max(0, shows.findIndex((s) => s.key === this.podcast.showKey));
         const showIdx = how === 'next-show' ? (curIdx + 1) % shows.length : curIdx;
@@ -250,6 +301,7 @@ export class Controller {
       }
       this.player.stop();
       this._setMode('silence', null);
+      this.cues.play('silence');
       return;
     }
     // A radio stream "ending" is really a drop.

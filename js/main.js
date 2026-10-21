@@ -14,6 +14,7 @@ const local = storage.get('settings') || {};
 if (Number.isFinite(local.debounceMs)) config.debounceMs = local.debounceMs;
 if (Number.isFinite(local.keepAwakeLevel)) config.keepAwake.level = local.keepAwakeLevel;
 if (Number.isFinite(local.cueVolume)) config.cueVolume = local.cueVolume;
+if (local.quietHours) config.quietHours = { ...config.quietHours, ...local.quietHours };
 const getEndpoint = () => local.sheetUrl || config.sheetUrl || '';
 
 // ---- podcast episodes -------------------------------------------------
@@ -145,6 +146,10 @@ $('#open-settings').addEventListener('click', () => {
   $('#set-debounce').value = config.debounceMs;
   $('#set-keepawake').value = Math.round(config.keepAwake.level * 1000 * 10) / 10;
   $('#set-cuevol').value = config.cueVolume;
+  $('#set-quiet-on').checked = !!config.quietHours.enabled;
+  $('#set-quiet-start').value = config.quietHours.start;
+  $('#set-quiet-end').value = config.quietHours.end;
+  $('#set-quiet-hard').value = config.quietHours.hardStop || '';
   $('#set-status').textContent = '';
   renderCueRows();
   dlg.showModal();
@@ -153,8 +158,17 @@ $('#save-settings').addEventListener('click', () => {
   local.sheetUrl = $('#set-endpoint').value.trim();
   const d = parseInt($('#set-debounce').value, 10);
   if (Number.isFinite(d) && d >= 0) local.debounceMs = config.debounceMs = d;
+  const qs = $('#set-quiet-start').value;
+  const qe = $('#set-quiet-end').value;
+  if (qs && qe) {
+    local.quietHours = { enabled: $('#set-quiet-on').checked, start: qs, end: qe, hardStop: $('#set-quiet-hard').value || '' };
+    config.quietHours = { ...config.quietHours, ...local.quietHours };
+  }
   const cv = parseFloat($('#set-cuevol').value);
-  if (Number.isFinite(cv) && cv > 0) local.cueVolume = config.cueVolume = cv;
+  if (Number.isFinite(cv) && cv > 0 && cv !== config.cueVolume) {
+    local.cueVolume = config.cueVolume = cv;
+    cues.load(); // loudness is baked in when cues load
+  }
   const k = parseFloat($('#set-keepawake').value);
   if (Number.isFinite(k) && k >= 0) {
     local.keepAwakeLevel = config.keepAwake.level = k / 1000;
@@ -185,7 +199,7 @@ $('#export-csv').addEventListener('click', () => {
 $('#close-settings').addEventListener('click', () => dlg.close());
 
 // ---- cue recording ----------------------------------------------------
-const CUE_LABELS = { music: 'Music', podcast: 'Podcast', silence: 'All done' };
+const CUE_LABELS = { music: 'Music', podcast: 'Podcast', silence: 'All done', refuse: 'Not doing that' };
 let recorder = null;
 
 function renderCueRows() {
@@ -195,6 +209,7 @@ function renderCueRows() {
         <span class="cue-name">${label}</span>
         <span class="cue-src">${esc(cues.sourceOf(name))}</span>
         <button data-act="rec">${recorder?.name === name ? 'Stop' : 'Record'}</button>
+        <button data-act="file">Load file</button>
         <button data-act="play">Play</button>
         ${cues.recording(name) ? '<button data-act="clear">Delete</button>' : ''}
       </div>`)
@@ -210,6 +225,28 @@ $('#cue-rows').addEventListener('click', async (e) => {
     cues.stop();
     pressAt = performance.now();
     return playCue(name);
+  }
+  if (btn.dataset.act === 'file') {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      if (f.size > 1_500_000) {
+        $('#set-status').textContent = 'That file is too big; trim it to just the word (a few seconds at most).';
+        return;
+      }
+      const dataUrl = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
+      await cues.setRecording(name, dataUrl);
+      $('#set-status').textContent = cues.buffers[name]
+        ? `Loaded "${CUE_LABELS[name]}" from ${f.name}. Press Play to check it.`
+        : `Couldn't read ${f.name} as audio. Try an .mp3, .m4a or .wav file.`;
+      if (!cues.buffers[name]) await cues.setRecording(name, null);
+      renderCueRows();
+    };
+    input.click();
+    return;
   }
   if (btn.dataset.act === 'clear') {
     await cues.setRecording(name, null);
@@ -256,6 +293,7 @@ async function startRecording(name) {
 
 // ---- rendering --------------------------------------------------------
 const MODE_WORDS = { silence: 'Quiet', music: 'Music', podcast: 'Podcast' };
+const QUIET_NOTE = () => (controller.isQuiet() ? `Quiet hours until ${config.quietHours.end}` : '');
 
 function flash(button) {
   const el = document.querySelector(`[data-button="${button}"]`);
@@ -269,7 +307,7 @@ function render() {
   const mode = controller.mode;
   document.body.dataset.mode = mode;
   $('#mode').textContent = MODE_WORDS[mode];
-  $('#source').textContent = controller.current?.label || (mode === 'silence' ? '' : 'Starting…');
+  $('#source').textContent = controller.current?.label || (mode === 'silence' ? QUIET_NOTE() : 'Starting…');
   document.querySelectorAll('[data-button]').forEach((el) => el.classList.toggle('active', el.dataset.button === mode));
 
   const rows = logger.history.slice(-12).reverse();
@@ -305,6 +343,8 @@ function describe(r) {
     case 'all_failed': return `Nothing would play (${r.detail})`;
     case 'episode_ended': return `Finished ${r.detail}`;
     case 'cue': return `Cue "${r.button}": ${r.detail}`;
+    case 'quiet_hours_stop': return `Quiet hours: ${r.detail}`;
+    case 'quiet_hours_start': return `Quiet hours started${r.detail ? `: ${r.detail}` : ''}`;
     case 'wake_delay': return `Waited for speaker: ${r.detail}`;
     default: return `${r.event}${r.detail ? `: ${r.detail}` : ''}`;
   }

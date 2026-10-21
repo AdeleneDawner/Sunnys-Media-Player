@@ -20,14 +20,21 @@ export default {
   //   'sounds/ready.mp3' = your own file
   readySound: null,
 
-  // Spoken cues. If `file` is set and loads, it's played; otherwise the
-  // browser's text-to-speech says `speak`. Drop recordings in /sounds and
-  // set the file paths when you have them.
+  // Spoken cues, in priority order: a recording made in the app's Settings on
+  // the device; then `file` (if it exists in the repo); then the browser's
+  // text-to-speech saying `speak`, which can lag.
   cues: {
-    music:   { file: null, speak: 'music' },
-    podcast: { file: null, speak: 'podcast' },
-    silence: { file: null, speak: 'all done' },
+    music:   { file: 'sounds/music.wav',    speak: 'music' },
+    podcast: { file: 'sounds/podcast.wav',  speak: 'podcast' },
+    silence: { file: 'sounds/all-done.wav', speak: 'all done' },
+    refuse:  { file: 'sounds/not-doing-that.wav', speak: 'not doing that' },
   },
+
+  // Quiet hours (the Chromebook's local time). At `start`, music stops with
+  // "all done"; a podcast is allowed to finish. Until `end`, music, and starting
+  // a podcast from silence, get "not doing that". At `hardStop` anything still
+  // playing stops with "all done". Also adjustable in Settings.
+  quietHours: { enabled: true, start: '22:00', hardStop: '23:00', end: '07:00' },
 
   // When the music/podcast cue plays:
   //   'starting'  = only when that pedal starts its category (from silence, or
@@ -47,9 +54,9 @@ export default {
   keepAwake: { level: 0.01, cutoffHz: 150, wakeDelayMs: 2000 },
 
   masterVolume: 1.0, // 0..1, multiplies every source's volume
-  // Loudness of recorded cues. Recordings are normalized to full level, then
-  // boosted by this factor through a limiter (so higher = louder, not distorted).
-  // 1 = plain normalized; default 3. Also adjustable on the device in Settings.
+  // Loudness of recorded cues: 1 = moderate, 3 = default, 10 = as loud as it goes.
+  // Recordings are noise-gated, brought to this level, and limited so they don't
+  // clip. Also adjustable on the device in Settings.
   cueVolume: 3.0,
 
   // Music: internet radio streams. `volume` (0..1) evens out loud vs quiet stations.
@@ -78,9 +85,10 @@ export default {
     pick: 'random-recent',
     recentCount: 10,
     // What happens when an episode finishes on its own:
-    //   'silence'      = stop (no cue); next podcast press plays a new episode of the same show
+    //   'silence'      = stop and say "all done"; next podcast press plays a new episode of the same show
     //   'next-episode' = keep going with another episode of the same show
     //   'next-show'    = keep going with the next show
+    //   (during quiet hours it always stops)
     onEpisodeEnd: 'silence',
     refreshMinutes: 60, // how often the app re-downloads the episode list from the Sheet
   },

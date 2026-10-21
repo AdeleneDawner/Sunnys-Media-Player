@@ -9,7 +9,7 @@
 //      especially if the system voice is an online one, so it's only a fallback.
 // Leading and trailing silence is trimmed off recordings and files.
 
-const NAMES = ['music', 'podcast', 'silence'];
+const NAMES = ['music', 'podcast', 'silence', 'refuse'];
 
 export class Cues {
   constructor(config, { getContext, storage }) {
@@ -34,7 +34,7 @@ export class Cues {
         try {
           const res = await fetch(src);
           const decoded = await ctx.decodeAudioData(await res.arrayBuffer());
-          this.buffers[name] = trimSilence(ctx, normalize(decoded));
+          this.buffers[name] = trimSilence(ctx, processVoice(decoded, this.config.cueVolume ?? 3));
         } catch (err) {
           console.warn(`cue ${name} failed to load`, err);
           delete this.buffers[name];
@@ -93,16 +93,8 @@ export class Cues {
     return new Promise((resolve) => {
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      // Boost, then a limiter so the boost makes speech louder without clipping.
-      const gain = ctx.createGain();
-      gain.gain.value = this.config.cueVolume ?? 1;
-      const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.value = -10;
-      limiter.knee.value = 6;
-      limiter.ratio.value = 20;
-      limiter.attack.value = 0.002;
-      limiter.release.value = 0.15;
-      src.connect(gain).connect(limiter).connect(ctx.destination);
+      // Loudness is already baked in by processVoice(); play as-is.
+      src.connect(ctx.destination);
       let done = false;
       const finish = () => {
         if (done) return;
@@ -148,27 +140,96 @@ export class Cues {
   }
 }
 
-// Scale so the loudest point is just under full scale (mic recordings usually
-// come in far quieter than music). Gain is capped so a near-silent recording
-// doesn't turn into amplified hiss.
-export function normalize(buf, target = 0.95, maxGain = 40) {
-  let peak = 0;
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+// Prepares a voice recording for playback, in place:
+//   1. noise gate: stretches quieter than the speech (room hiss, mic noise) are
+//      faded to silence, so boosting the voice doesn't boost the static;
+//   2. loudness: the speech is brought to a target level set by `loudness`
+//      (1 = moderate, 3 = default, 10 = as loud as it goes);
+//   3. look-ahead limiter: peaks pushed past full scale are turned down smoothly
+//      instead of clipping (clipping is what sounds crackly).
+export function processVoice(buf, loudness = 3) {
+  const sr = buf.sampleRate;
+  const chans = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+  const n = chans[0].length;
+  const mono = new Float32Array(n);
+  for (const d of chans) for (let i = 0; i < n; i++) mono[i] += d[i] / chans.length;
+
+  // Short-window RMS envelope.
+  const win = Math.max(1, Math.round(sr * 0.01));
+  const nw = Math.ceil(n / win);
+  const env = new Float32Array(nw);
+  for (let w = 0; w < nw; w++) {
+    let sum = 0;
+    const end = Math.min(n, (w + 1) * win);
+    for (let i = w * win; i < end; i++) sum += mono[i] * mono[i];
+    env[w] = Math.sqrt(sum / (end - w * win));
   }
-  if (!peak) return buf;
-  const g = Math.min(maxGain, target / peak);
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) d[i] *= g;
+  const sorted = Array.from(env).sort((a, b) => a - b);
+  const floor = sorted[Math.floor(nw * 0.1)] || 0;
+  const loud = sorted[Math.floor(nw * 0.95)] || 0;
+  if (!loud) return buf;
+
+  // 1. Gate: open where the envelope is well above the noise floor and not far
+  //    below the loudest speech; hold open briefly so word endings survive.
+  const open = Math.max(floor * 4, loud * 0.08);
+  const hold = Math.round(0.08 / 0.01);
+  const gateW = new Float32Array(nw);
+  for (let w = 0, held = 0; w < nw; w++) {
+    if (env[w] >= open) held = hold;
+    gateW[w] = held > 0 ? 1 : 0;
+    held--;
   }
+  for (let w = nw - 1, held = 0; w >= 0; w--) { // also open slightly before onsets
+    if (env[w] >= open) held = 3;
+    if (held-- > 0) gateW[w] = 1;
+  }
+
+  // 2. Loudness: scale so the speech's RMS hits the target.
+  let sum = 0;
+  let count = 0;
+  for (let w = 0; w < nw; w++) if (gateW[w]) { sum += env[w] * env[w]; count++; }
+  const speechRms = Math.sqrt(sum / Math.max(1, count)) || loud;
+  const targetDb = Math.min(-6, -20 + 2 * loudness);
+  const gain = Math.min(60, Math.pow(10, targetDb / 20) / speechRms);
+
+  // Per-sample gain: gate (with 5 ms smoothing) times loudness gain.
+  const g = new Float32Array(n);
+  const smooth = 1 - Math.exp(-1 / (sr * 0.005));
+  for (let i = 0, cur = 0; i < n; i++) {
+    cur += (gateW[Math.floor(i / win)] - cur) * smooth;
+    g[i] = cur * gain;
+  }
+
+  // 3. Look-ahead limiter: required reduction so |x| stays under the ceiling,
+  //    spread over a few ms before each peak and released slowly after.
+  const ceiling = 0.9;
+  const need = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = Math.abs(mono[i] * g[i]);
+    need[i] = v > ceiling ? ceiling / v : 1;
+  }
+  const look = Math.round(sr * 0.005);
+  const red = new Float32Array(n).fill(1);
+  const dq = []; // sliding-window minimum over [i, i+look]
+  for (let i = n - 1; i >= 0; i--) {
+    while (dq.length && need[dq[dq.length - 1]] >= need[i]) dq.pop();
+    dq.push(i);
+    while (dq[0] > i + look) dq.shift();
+    red[i] = need[dq[0]];
+  }
+  const rel = 1 - Math.exp(-1 / (sr * 0.08));
+  for (let i = 0, cur = 1; i < n; i++) {
+    cur = red[i] < cur ? red[i] : cur + (red[i] - cur) * rel;
+    g[i] *= cur;
+  }
+
+  for (const d of chans) for (let i = 0; i < n; i++) d[i] = Math.max(-0.98, Math.min(0.98, d[i] * g[i]));
   return buf;
 }
 
 // Cut leading/trailing near-silence (keeping a few ms of margin) so a cue
 // recorded with a pause before the word still plays immediately.
-export function trimSilence(ctx, buf, threshold = 0.06, marginSec = 0.04) {
+export function trimSilence(ctx, buf, threshold = 0.01, marginSec = 0.02) {
   const ch = buf.getChannelData(0);
   let start = 0;
   let end = ch.length - 1;
