@@ -108,6 +108,10 @@
   .cue-name { font-weight: 600; min-width: 5.5em; }
   .cue-src { color: var(--muted); font-size: .85rem; flex: 1; min-width: 8em; }
   .cue-row button { padding: 6px 12px; }
+  .quiet-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .quiet-row input[type="time"] { width: auto; }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--text); }
+  label.inline input { width: auto; }
 </style>
 </head>
 <body data-mode="silence">
@@ -141,9 +145,16 @@
     <h2>Settings (this device only)</h2>
     <label>Spoken cues</label>
     <div id="cue-rows"></div>
-    <label for="set-cuevol">Cue loudness (1 = normal, default 3; press Save, then Play to hear the change)</label>
+    <label for="set-cuevol">Cue loudness (1–10, default 3; press Save, then Play to hear the change)</label>
     <input id="set-cuevol" type="number" min="0.5" max="20" step="0.5">
-    <div class="hint">Record each cue in your own voice (Chrome will ask for the microphone the first time). Recordings start instantly; text-to-speech can lag. Silence before and after the word is trimmed automatically.</div>
+    <div class="hint">Record each cue in your own voice (Chrome will ask for the microphone the first time), close to the mic in a quiet room. Or use Load file for a recording made elsewhere, e.g. a phone voice memo. Recordings play instantly; text-to-speech can lag. Background hiss between words is removed and the level is evened out automatically.</div>
+    <label>Quiet hours</label>
+    <div class="quiet-row">
+      <label class="inline"><input id="set-quiet-on" type="checkbox"> On</label>
+      <input id="set-quiet-start" type="time"> to <input id="set-quiet-end" type="time">
+      <span>· everything off by</span> <input id="set-quiet-hard" type="time">
+    </div>
+    <div class="hint">At the start time, music stops with "all done" (a podcast is left to finish). Until the end time, music and starting a podcast get "not doing that". At the "everything off by" time, whatever is still playing stops.</div>
     <label for="set-endpoint">Google Sheet web app URL</label>
     <input id="set-endpoint" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
     <div class="hint">From Deploy in the Sheet's Apps Script. Used for the podcast list and the log. Stored on this Chromebook, not in the public repo.</div>
